@@ -7,12 +7,12 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# データを起動時に一括でメモリにロード
+# データをリストで保持（起動時に一度だけ）
 try:
     with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
-        SITE_DATA = f.read()
+        DATA_LINES = f.readlines()
 except:
-    SITE_DATA = "データが見つかりません。"
+    DATA_LINES = ["データが見つかりません。"]
 
 class ChatRequest(BaseModel):
     message: str
@@ -42,7 +42,7 @@ async def index():
 <body>
     <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
     <div id="chat-container">
-        <div id="messages"><div class="message bot">ばんばんち。準備完了。何でも聞いてください。</div></div>
+        <div id="messages"><div class="message bot">ばんばんち。何でも聞いてください。</div></div>
         <div id="input-area">
             <input type="text" id="user-input" placeholder="メッセージを入力...">
             <button onclick="sendMessage()">送信</button>
@@ -67,19 +67,26 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # データを読み込むのではなく、すでにメモリにあるSITE_DATAを直接送る（爆速）
+    # 質問に関連する行だけを抽出（プログラム側で検索）
+    query = payload.message
+    # 関連する行（質問にキーワードが含まれる行）を最大10行だけ抽出
+    context = "\n".join([line for line in DATA_LINES if any(word in line for word in query.split())])
+    
+    # contextが空なら最近のデータを提示
+    if not context:
+        context = "\n".join(DATA_LINES[-20:])
+
     try:
         res = client.chat.completions.create(
-            model="gpt-4o-mini", # 高速なモデルに変更し、タイムアウトを回避
-            temperature=0,
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": f"あなたはファンサイトの案内人。以下の【データ】のみを根拠に回答せよ。推測禁止。データがない場合は「分かりません」と答えること。\n【データ】{SITE_DATA}"},
-                {"role": "user", "content": payload.message}
+                {"role": "system", "content": f"あなたは案内人「ばんばんち」。以下の【関連データ】のみを根拠に回答せよ。【関連データ】{context}"},
+                {"role": "user", "content": query}
             ]
         )
         return {"reply": res.choices[0].message.content}
-    except Exception as e:
-        return {"reply": "通信エラーが発生しました。もう一度入力してください。"}
+    except Exception:
+        return {"reply": "サーバーが混雑しています。もう一度押してください。"}
 
 if __name__ == "__main__":
     import uvicorn
