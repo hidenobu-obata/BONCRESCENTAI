@@ -9,35 +9,12 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# データを起動時に一度だけ取得し、メモリにキャッシュ
-KNOWLEDGE_BASE = {}
-
-@app.on_event("startup")
-def init_knowledge_base():
-    global KNOWLEDGE_BASE
-    urls = {
-        "index": "https://boncrescent-erifan.jp/index.html",
-        "3lines": "https://boncrescent-erifan.jp/special/3lines/index.htm",
-        "bonroom": "https://boncrescent-erifan.jp/salon/bonroom.htm"
-    }
-    for i in range(1, 25):
-        urls[f"kiji{i}"] = f"https://boncrescent-erifan.jp/kiji/kiji{i}.html"
-    
-    for key, url in urls.items():
-        try:
-            res = requests.get(url, timeout=10)
-            res.encoding = 'shift_jis'
-            soup = BeautifulSoup(res.text, 'html.parser')
-            for s in soup(["script", "style", "nav", "footer"]): s.decompose()
-            KNOWLEDGE_BASE[key] = soup.get_text(separator=' ', strip=True)
-        except: continue
-
 class ChatRequest(BaseModel):
     message: str
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    # 管理人様が指定されたUI・レスポンシブ設定をそのまま維持
+    # 管理人様がこだわったレスポンシブUIを完全維持
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html lang="ja">
@@ -62,9 +39,7 @@ async def index():
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages">
-                <div class="message bot">ばんばんち。「BON CRESCENT」の案内人です。準備完了しました。何でもお聞きください。</div>
-            </div>
+            <div id="messages"><div class="message bot">ばんばんち！準備完了。何でも聞いてください。</div></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
                 <button onclick="sendMessage()">送信</button>
@@ -90,17 +65,34 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 質問に関連する記事だけを高速抽出（全データを一度に渡すと遅延するため）
-    query = payload.message
-    relevant_texts = [text for key, text in KNOWLEDGE_BASE.items() if any(word in text for word in query.split())]
-    context = "\n\n".join(relevant_texts) if relevant_texts else "\n\n".join(KNOWLEDGE_BASE.values())[:10000]
-
+    # 質問が来た時にだけデータを取得する「オンデマンド方式」でタイムアウトを防止
+    raw_texts = []
+    urls = [
+        "https://boncrescent-erifan.jp/index.html",
+        "https://boncrescent-erifan.jp/special/3lines/index.htm",
+        "https://boncrescent-erifan.jp/salon/bonroom.htm"
+    ] + [f"https://boncrescent-erifan.jp/kiji/kiji{i}.html" for i in range(1, 25)]
+    
+    for url in urls:
+        try:
+            res = requests.get(url, timeout=3) # タイムアウトを短く設定
+            res.encoding = 'shift_jis'
+            soup = BeautifulSoup(res.text, 'html.parser')
+            for s in soup(["script", "style", "nav", "footer"]): s.decompose()
+            raw_texts.append(soup.get_text(separator=' ', strip=True))
+        except: continue
+        
+    all_data = "\n\n".join(raw_texts)
+    
     res = client.chat.completions.create(
         model="gpt-4o",
-        temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたは「BON CRESCENT」の専属案内人「ばんばんち」。以下データのみに基づき回答せよ。\n{context}"},
+            {"role": "system", "content": f"あなたは「ばんばんち」。以下サイトデータのみを根拠に回答せよ。\n{all_data}"},
             {"role": "user", "content": payload.message}
         ]
     )
     return {"reply": res.choices[0].message.content}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
