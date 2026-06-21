@@ -7,63 +7,82 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# 起動時に一度だけ読み込むが、検索用に「リスト化」してメモリに保持
+# データを読み込む関数（デプロイ時に必ずdata.txtが存在することを確認してください）
 def load_data():
     try:
         with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
-            # 500文字ごとのブロックに分けることで、AIの解析負荷を激減させる
-            text = f.read()
-            return [text[i:i+500] for i in range(0, len(text), 500)]
+            return f.read()
     except:
-        return ["データなし"]
+        return "データが読み込まれていません。"
 
-DATA_BLOCKS = load_data()
+SITE_DATA = load_data()
 
 class ChatRequest(BaseModel):
     message: str
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    # 管理人様のこだわりのデザインを全て復元しました
     return HTMLResponse(content="""
-    <!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>BON CRESCENT AI</title>
-    <style>
-        body { background-color: #0b132b; color: #f4f4f9; font-family: sans-serif; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        #chat-container { width: 95%; max-width: 600px; background: #1c2541; border-radius: 10px; padding: 15px; }
-        #messages { height: 60vh; overflow-y: auto; border-bottom: 1px solid #3a506b; padding-bottom: 15px; }
-        .message { margin: 10px 0; padding: 10px; border-radius: 5px; }
-        .user { background: #3a506b; margin-left: auto; width: fit-content; max-width: 80%; }
-        .bot { background: #5bc0be; color: #0b132b; width: fit-content; max-width: 80%; }
-        input { width: 70%; padding: 10px; }
-    </style></head>
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>BON CRESCENT AI</title>
+        <style>
+            body { background-color: #0b132b; color: #f4f4f9; font-family: sans-serif; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+            h1 { color: #f9d71c; text-align: center; font-size: 1.5rem; }
+            #chat-container { width: 95%; max-width: 600px; background: #1c2541; border-radius: 10px; padding: 15px; box-sizing: border-box; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+            #messages { height: 60vh; overflow-y: auto; border-bottom: 1px solid #3a506b; padding-bottom: 15px; margin-bottom: 15px; }
+            .message { margin: 10px 0; padding: 10px; border-radius: 5px; line-height: 1.4; }
+            .user { background: #3a506b; margin-left: auto; text-align: right; width: fit-content; max-width: 80%; }
+            .bot { background: #5bc0be; color: #0b132b; width: fit-content; max-width: 80%; }
+            #input-area { display: flex; gap: 10px; }
+            input { flex: 1; padding: 10px; border-radius: 5px; border: none; font-size: 16px; }
+            button { background: #f9d71c; border-radius: 5px; border: none; padding: 10px 15px; cursor: pointer; font-weight: bold; }
+            @media (max-width: 480px) { h1 { font-size: 1.2rem; } }
+        </style>
+    </head>
     <body>
+        <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">爆速モードで起動しました。質問をどうぞ！</div></div>
-            <input type="text" id="user-input"><button onclick="sendMessage()">送信</button>
+            <div id="messages"><div class="message bot">ばんばんち。準備完了しました。何でも聞いてください。</div></div>
+            <div id="input-area">
+                <input type="text" id="user-input" placeholder="メッセージを入力...">
+                <button onclick="sendMessage()">送信</button>
+            </div>
         </div>
         <script>
             async function sendMessage() {
                 const input = document.getElementById('user-input');
-                const text = input.value;
+                const text = input.value.trim();
+                if (!text) return;
                 const msgDiv = document.getElementById('messages');
                 msgDiv.innerHTML += `<div class="message user">${text}</div>`;
-                const res = await fetch('/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: text })});
-                const data = await res.json();
-                msgDiv.innerHTML += `<div class="message bot">${data.reply}</div>`;
                 input.value = '';
+                try {
+                    const res = await fetch('/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: text })});
+                    const data = await res.json();
+                    msgDiv.innerHTML += `<div class="message bot">${data.reply}</div>`;
+                    msgDiv.scrollTop = msgDiv.scrollHeight;
+                } catch(e) {
+                    msgDiv.innerHTML += `<div class="message bot">通信エラーです。もう一度試してください。</div>`;
+                }
             }
         </script>
-    </body></html>""")
+    </body>
+    </html>
+    """)
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 質問に関連するブロックだけをAIに渡す（これが爆速の理由）
-    context = "\n".join(DATA_BLOCKS[:10]) # 冒頭や重要部分を適宜調整
-    
+    # AIが全データを正しく認識するための最強設定
     res = client.chat.completions.create(
         model="gpt-4o",
         temperature=0,
         messages=[
-            {"role": "system", "content": f"以下のデータに基づいて回答してください。\n{context}"},
+            {"role": "system", "content": f"あなたはファンサイトの案内人です。以下の管理人による記録データを絶対的な真実として回答してください。\n{SITE_DATA}"},
             {"role": "user", "content": payload.message}
         ]
     )
