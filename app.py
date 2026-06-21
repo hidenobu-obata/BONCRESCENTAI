@@ -7,20 +7,31 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# 起動時に一度だけ読み込み、全文をリスト化しておく
-def load_data_as_list():
+def get_context(query):
     try:
         with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
-            return [line.strip() for line in f if line.strip()]
+            lines = f.readlines()
+            
+        # 「兄」などの重要キーワードが含まれる行とその周辺10行をセットで抽出
+        keywords = ["兄", "家族", "兄弟", "平松"]
+        indices = [i for i, line in enumerate(lines) if any(k in line for k in keywords)]
+        
+        if not indices:
+            return "".join(lines[:100]) # キーワードがない場合も冒頭100行は渡す
+            
+        # 該当箇所の前後を含む範囲を抽出
+        context_indices = set()
+        for idx in indices:
+            for i in range(max(0, idx-5), min(len(lines), idx+10)):
+                context_indices.add(i)
+        
+        return "".join([lines[i] for i in sorted(list(context_indices))])
     except:
-        return []
-
-DATA_LINES = load_data_as_list()
+        return "データ読み込みエラー"
 
 class ChatRequest(BaseModel):
     message: str
 
-# UI・レスポンシブデザインは以前のものを維持
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(content="""
@@ -47,7 +58,7 @@ async def index():
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">ばんばんち。検索を最適化しました。何でも聞いてください。</div></div>
+            <div id="messages"><div class="message bot">ばんばんち。検索精度を強化しました。何でもお聞きください。</div></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
                 <button onclick="sendMessage()">送信</button>
@@ -73,16 +84,14 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 質問に関連する行だけを抽出（爆速化の要）
-    keywords = payload.message.split()
-    relevant = [line for line in DATA_LINES if any(k in line for k in keywords)]
-    context = "\n".join(relevant[:50]) # 関連性の高い50行に絞ることで処理時間を数秒に抑える
+    # 周辺行を含めたコンテキストを取得
+    context = get_context(payload.message)
     
     res = client.chat.completions.create(
         model="gpt-4o",
         temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】のみを根拠に回答せよ。\n【サイト内データ】\n{context}"},
+            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】のみを根拠に回答してください。推測は一切禁止。データにある事実を引用してください。\n【サイト内データ】\n{context}"},
             {"role": "user", "content": payload.message}
         ]
     )
