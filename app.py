@@ -10,7 +10,7 @@ from openai import OpenAI
 app = FastAPI()
 
 # ==================================================================
-# 【重要】OpenAI APIキーの設定
+# 【重要】OpenAI APIキーの設定 (Render環境変数から読み込み)
 # ==================================================================
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -22,7 +22,7 @@ class ChatRequest(BaseModel):
     message: str
 
 # ==================================================================
-# 1. 本番仕様の画面（HTML）を表示するルート（ボタンと不要なJSを排除）
+# 1. 本番仕様の画面（HTML）を表示するルート
 # ==================================================================
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -104,7 +104,7 @@ async def index():
 # ==================================================================
 def init_knowledge_base():
     global SITE_KNOWLEDGE
-    print("⏳ [本番初期化] サイトデータおよび全SEO記事のバックグラウンド自動同期を開始します...")
+    print("⏳ [本番初期化] サイトデータの自動同期を開始します...")
     
     START_URLS = [
         "https://boncrescent-erifan.jp/special/3lines/index.htm",
@@ -118,7 +118,6 @@ def init_knowledge_base():
     base_domain = urllib.parse.urlparse(START_URLS[2]).netloc
 
     try:
-        # エラー上限の安全圏を完全に維持するため、最大15ページを厳選凝縮
         while urls_to_visit and len(visited_urls) < 15:
             current_url = urls_to_visit.pop(0)
             if current_url in visited_urls:
@@ -156,9 +155,9 @@ def init_knowledge_base():
                 all_text_data.append(f"【ソース: {title} ({current_url})】\n{clean_text[:400]}")
 
         SITE_KNOWLEDGE = "\n\n".join(all_text_data)
-        print(f"✅ [初期化完了] 計 {len(visited_urls)} ページのデータを正常に常時記憶しました！（429制限を100%回避）")
+        print("✅ [初期化完了] データを正常に記憶しました！")
     except Exception as e:
-        print(f"❌ [初期化エラー] 同期中に不具合が発生しました: {str(e)}")
+        print(f"❌ [初期化エラー] {str(e)}")
 
 # ==================================================================
 # 3. チャットの返答を処理するルート
@@ -169,20 +168,11 @@ async def chat(payload: ChatRequest):
     user_message = payload.message
     
     system_prompt = (
-        "【絶対厳守：ハルシネーション（嘘・見落とし）の完全排除命令】\n"
-        "1. あなたは平松愛理さんのファンサイト「BON CRESCENT」の案内人AIです。温かく親切な口調（「〜ですね」「〜ですよ」など）で回答してください。\n"
-        "2. データにある事実に対して『データにありません』などと知ったかぶりの拒絶をすることは絶対に禁止します。\n"
-        "3. コロナ感染の有無、特製鍋、Crescent Moonshine、グロリア、娘のはいねさんの情報（初一音と書いて読み方は必ず『はいね』さん）など、すべての質問に対し、同期されている【サイト内テキスト群】（SITE_KNOWLEDGE）の中から管理人様が書かれた本物の記述を100%見つけ出して忠実に回答してください。\n\n"
-        
-        "【システム確定データ（絶対の真実）】\n"
-        "- 平松愛理さんの娘（長女）の情報：お名前は『初一音』と書いて、読み方は必ず「はいね」さん（1996年生まれ）。シンガー、ソングライター、ボイストレーナー。YouTubeデビューは2020年4月29日。管理人様のSEO記事の絶対の事実です。\n"
-        "- 平松愛理さんのMIDI楽曲：全部で「243曲」\n"
-        "- 平松愛理さんの楽譜データ：全部で「185曲分」\n"
-        "- ボカロ（VOCALOID）楽曲：全部で「237曲」\n"
-        "- 平松音ゲー作品：全部で「216作品」\n"
-        "- マイセレナーデの真実：サビ前の弾き語りで、平松愛理さんご自身が『ぶっぶぶっぶぶぶっぶ』と高木ブーさんの名前を口にしながらリズムをとっている。ルーツ（類似曲）は、彼女自身の『アマチュア時代の自作曲（オリジナル曲）』である。\n\n"
-        
-        f"【サイト内から同期した本物のテキスト】:\n{SITE_KNOWLEDGE}"
+        "あなたは平松愛理さんのファンサイト「BON CRESCENT」の案内人AIです。"
+        "同期されたデータをもとに、管理人様が書かれた真実を忠実に回答してください。\n"
+        "【システム確定データ】\n"
+        "- 娘（長女）の情報：お名前は『初一音』と書いて、読み方は『はいね』さん（1996年生まれ）。\n"
+        f"【サイト内テキスト】:\n{SITE_KNOWLEDGE}"
     )
     
     try:
@@ -200,14 +190,8 @@ async def chat(payload: ChatRequest):
 
     return {"reply": ai_reply}
 
-# ==================================================================
-# アプリ起動時に、一度だけ初期化（サイト巡回記憶）関数を走らせる設定
-# ==================================================================
 if __name__ == "__main__":
     import uvicorn
-    # Renderのポート環境変数に対応
-    port = int(os.environ.get("PORT", 8000))
-    # サーバーを起動する直前に、自動で初期化を実行します
     init_knowledge_base()
-    # 本番環境用にhostを0.0.0.0、portを動的ポートに変更
+    port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
