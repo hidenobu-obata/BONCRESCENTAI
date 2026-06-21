@@ -2,7 +2,7 @@ import os
 import uvicorn
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from openai import OpenAI
 
@@ -18,16 +18,14 @@ TARGET_URLS.extend([
     f"{BASE_URL}/special/3lines/index.htm"
 ])
 
-# サイト内の情報を自動収集してメモリに蓄積する関数
 def scrape_data():
     full_text = ""
     for url in TARGET_URLS:
         try:
-            res = requests.get(url, timeout=5)
+            res = requests.get(url, timeout=3)
             soup = BeautifulSoup(res.content, "html.parser")
             full_text += soup.get_text() + "\n"
-        except:
-            continue # 読み込めないページは無視
+        except: continue
     return full_text
 
 SITE_DATA = scrape_data()
@@ -40,31 +38,40 @@ async def index():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>平松愛理ファンサイト BON CRESCENT AI</title>
+        <title>BON CRESCENT AI</title>
         <style>
-            body { background: #0a0e17; color: #e0e6ed; font-family: sans-serif; margin: 0; display: flex; justify-content: center; }
-            #container { width: 100%; max-width: 500px; padding: 20px; box-sizing: border-box; }
-            h1 { text-align: center; color: #f9d71c; }
-            .subtitle { text-align: center; color: #5bc0be; margin-bottom: 20px; }
-            #chat-box { height: 50vh; overflow-y: auto; border: 1px solid #3a506b; padding: 15px; border-radius: 10px; background: #1c2541; }
-            input { width: 100%; padding: 12px; margin-top: 10px; border-radius: 5px; }
-            button { width: 100%; padding: 12px; background: #f9d71c; border-radius: 5px; margin-top: 10px; cursor: pointer; }
+            body { font-family: sans-serif; background: #0a0e17; color: #fff; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+            #container { width: 100%; max-width: 600px; }
+            #chat-box { width: 100%; height: 400px; background: #1c2541; overflow-y: scroll; padding: 10px; border-radius: 8px; margin-bottom: 10px; }
+            input { width: 100%; padding: 15px; border-radius: 5px; border: none; box-sizing: border-box; }
+            button { width: 100%; padding: 15px; margin-top: 10px; background: #f9d71c; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
         </style>
     </head>
     <body>
         <div id="container">
-            <h1>平松愛理ファンサイト</h1>
-            <div class="subtitle">BON CRESCENT AI - ばんばんち</div>
-            <div id="chat-box"><div class="msg">ばんばんち。何でも聞いてね。</div></div>
-            <input type="text" id="q" placeholder="質問を入力...">
-            <button onclick="send()">送信</button>
+            <h1>BON CRESCENT AI</h1>
+            <div id="chat-box"></div>
+            <input type="text" id="q" placeholder="メッセージを入力...">
+            <button id="send-btn" onclick="send()">送信する</button>
         </div>
         <script>
             async function send() {
-                const q = document.getElementById('q').value;
-                const res = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({msg:q})});
-                const data = await res.json();
-                document.getElementById('chat-box').innerHTML += `<div class="msg"><b>あなた:</b> ${q}<br><b>ばんばんち:</b> ${data.reply}</div>`;
+                const input = document.getElementById('q');
+                const box = document.getElementById('chat-box');
+                const msg = input.value;
+                if(!msg) return;
+                box.innerHTML += `<p><b>自分:</b> ${msg}</p>`;
+                input.value = '';
+                try {
+                    const res = await fetch('/chat', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({msg: msg})
+                    });
+                    const data = await res.json();
+                    box.innerHTML += `<p style="color:#5bc0be"><b>ばんばんち:</b> ${data.reply}</p>`;
+                } catch(e) { box.innerHTML += `<p style="color:red">エラーが発生しました</p>`; }
+                box.scrollTop = box.scrollHeight;
             }
         </script>
     </body>
@@ -73,13 +80,10 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: dict):
-    user_query = payload.get("msg", "")
+    msg = payload.get("msg", "")
     res = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": f"あなたは平松愛理ファンサイトの案内人です。以下のサイト情報から正確に回答してください。\n{SITE_DATA}"},
-            {"role": "user", "content": user_query}
-        ]
+        messages=[{"role": "system", "content": f"以下のサイトデータに基づき回答せよ\n{SITE_DATA}"}, {"role": "user", "content": msg}]
     )
     return {"reply": res.choices[0].message.content}
 
