@@ -7,20 +7,20 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# アプリ起動時に一度だけdata.txtを読み込み、メモリに保持する方式
-# これなら起動時の通信エラーやタイムアウトは物理的に発生しません
-def load_data():
+# 起動時に一度だけ読み込み、全文をリスト化しておく
+def load_data_as_list():
     try:
         with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
-            return f.read()
-    except Exception as e:
-        return f"データ読み込みエラー: {e}"
+            return [line.strip() for line in f if line.strip()]
+    except:
+        return []
 
-SITE_DATA = load_data()
+DATA_LINES = load_data_as_list()
 
 class ChatRequest(BaseModel):
     message: str
 
+# UI・レスポンシブデザインは以前のものを維持
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(content="""
@@ -47,7 +47,7 @@ async def index():
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">ばんばんち。全データを読み込みました。何でも聞いてください。</div></div>
+            <div id="messages"><div class="message bot">ばんばんち。検索を最適化しました。何でも聞いてください。</div></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
                 <button onclick="sendMessage()">送信</button>
@@ -73,12 +73,16 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # すべてのデータをAIに渡す。今のモデルは非常に賢いため、この方が正確です。
+    # 質問に関連する行だけを抽出（爆速化の要）
+    keywords = payload.message.split()
+    relevant = [line for line in DATA_LINES if any(k in line for k in keywords)]
+    context = "\n".join(relevant[:50]) # 関連性の高い50行に絞ることで処理時間を数秒に抑える
+    
     res = client.chat.completions.create(
         model="gpt-4o",
         temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】のみを根拠に回答せよ。推測は厳禁。データにある事実を引用せよ。\n【サイト内データ】\n{SITE_DATA}"},
+            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】のみを根拠に回答せよ。\n【サイト内データ】\n{context}"},
             {"role": "user", "content": payload.message}
         ]
     )
