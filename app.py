@@ -1,32 +1,75 @@
 import os
-import sys
-import traceback
-import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from openai import OpenAI
 
-# ログを詳細に出力する設定
-print("--- 起動を開始しました ---", file=sys.stderr)
+app = FastAPI()
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-try:
-    app = FastAPI()
-    print("FastAPIアプリの作成に成功", file=sys.stderr)
+# 起動時にデータを読み込む
+def load_data():
+    try:
+        with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
+            return f.read()
+    except:
+        return "データが読み込めません。"
+
+SITE_DATA = load_data()
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return HTMLResponse(content="""
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>BON CRESCENT AI</title>
+        <style>
+            body { background: #0b132b; color: #f4f4f9; font-family: sans-serif; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+            h1 { color: #f9d71c; text-align: center; font-size: 1.5rem; }
+            #chat-container { width: 95%; max-width: 600px; background: #1c2541; border-radius: 10px; padding: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+            #messages { height: 60vh; overflow-y: auto; border-bottom: 1px solid #3a506b; padding: 10px; }
+            .message { margin: 10px 0; padding: 10px; border-radius: 5px; }
+            .user { background: #3a506b; text-align: right; }
+            .bot { background: #5bc0be; color: #0b132b; }
+        </style>
+    </head>
+    <body>
+        <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
+        <div id="chat-container">
+            <div id="messages"><div class="message bot">ばんばんち。データのみを根拠に回答します。</div></div>
+            <input type="text" id="user-input" placeholder="質問を入力..."><button onclick="sendMessage()">送信</button>
+        </div>
+        <script>
+            async function sendMessage() {
+                const input = document.getElementById('user-input');
+                const res = await fetch('/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: input.value })});
+                const data = await res.json();
+                document.getElementById('messages').innerHTML += `<div class="message bot">${data.reply}</div>`;
+                input.value = '';
+            }
+        </script>
+    </body>
+    </html>
+    """)
+
+@app.post("/chat")
+async def chat(payload: dict):
+    # 【最重要】プロンプトで「知識の外部参照」を禁止しました
+    system_instruction = (
+        "あなたは「ばんばんち」。あなたの知識源は以下の【データ】のみです。"
+        "ネット上の情報や一般的な知識は一切使用せず、【データ】の内容だけで回答してください。"
+        "もし【データ】に情報がない場合は、その旨を正直に伝えてください。"
+        f"【データ】\n{SITE_DATA}"
+    )
     
-    # data.txtの存在確認
-    if not os.path.exists("data.txt"):
-        print("致命的エラー: data.txtが見つかりません。", file=sys.stderr)
-    else:
-        print("data.txtを確認しました。", file=sys.stderr)
-
-    @app.get("/")
-    def read_root():
-        return {"status": "ok"}
-
-except Exception:
-    print("--- 起動中にエラーが発生しました ---", file=sys.stderr)
-    traceback.print_exc()
-    sys.exit(1) # これが「Application exited early」の正体です
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    print(f"ポート {port} で起動を試みます...", file=sys.stderr)
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    res = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": payload.get("message")}
+        ]
+    )
+    return {"reply": res.choices[0].message.content}
