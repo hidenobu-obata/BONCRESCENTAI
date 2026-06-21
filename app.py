@@ -7,27 +7,16 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-def get_context(query):
+# ファイルを最初から最後まで「そのまま」読み込む
+def read_all_data():
     try:
         with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
-            lines = f.readlines()
-            
-        # 「兄」などの重要キーワードが含まれる行とその周辺10行をセットで抽出
-        keywords = ["兄", "家族", "兄弟", "平松"]
-        indices = [i for i, line in enumerate(lines) if any(k in line for k in keywords)]
-        
-        if not indices:
-            return "".join(lines[:100]) # キーワードがない場合も冒頭100行は渡す
-            
-        # 該当箇所の前後を含む範囲を抽出
-        context_indices = set()
-        for idx in indices:
-            for i in range(max(0, idx-5), min(len(lines), idx+10)):
-                context_indices.add(i)
-        
-        return "".join([lines[i] for i in sorted(list(context_indices))])
+            return f.read()
     except:
-        return "データ読み込みエラー"
+        return "データファイル読み込み失敗"
+
+# 起動時に一度読み込み、常に保持
+SITE_DATA = read_all_data()
 
 class ChatRequest(BaseModel):
     message: str
@@ -58,7 +47,7 @@ async def index():
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">ばんばんち。検索精度を強化しました。何でもお聞きください。</div></div>
+            <div id="messages"><div class="message bot">ばんばんち。全データ直結モードです。質問をどうぞ。</div></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
                 <button onclick="sendMessage()">送信</button>
@@ -84,14 +73,12 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 周辺行を含めたコンテキストを取得
-    context = get_context(payload.message)
-    
+    # ロジックによる取捨選択を廃止。渡すのは「全データ」のみ。
     res = client.chat.completions.create(
         model="gpt-4o",
         temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】のみを根拠に回答してください。推測は一切禁止。データにある事実を引用してください。\n【サイト内データ】\n{context}"},
+            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】をすべて読み込み、その事実に基づいて回答せよ。データに記述がある場合、必ず内容を説明せよ。\n【サイト内データ】\n{SITE_DATA}"},
             {"role": "user", "content": payload.message}
         ]
     )
