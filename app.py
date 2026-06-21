@@ -1,6 +1,4 @@
 import os
-import requests
-from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -9,12 +7,22 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+# ファイルからデータを読み込むだけなので高速・確実
+def load_data():
+    try:
+        with open("data.txt", "r", encoding="shift_jis") as f:
+            return f.read()
+    except:
+        return "データが読み込めません。"
+
+SITE_DATA = load_data()
+
 class ChatRequest(BaseModel):
     message: str
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    # 管理人様がこだわったレスポンシブUIを完全維持
+    # 管理人様こだわりのUI・レスポンシブデザインはそのまま維持
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html lang="ja">
@@ -39,7 +47,7 @@ async def index():
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">ばんばんち！準備完了。何でも聞いてください。</div></div>
+            <div id="messages"><div class="message bot">ばんばんち。準備完了です。何でもお聞きください。</div></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
                 <button onclick="sendMessage()">送信</button>
@@ -65,29 +73,11 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 質問が来た時にだけデータを取得する「オンデマンド方式」でタイムアウトを防止
-    raw_texts = []
-    urls = [
-        "https://boncrescent-erifan.jp/index.html",
-        "https://boncrescent-erifan.jp/special/3lines/index.htm",
-        "https://boncrescent-erifan.jp/salon/bonroom.htm"
-    ] + [f"https://boncrescent-erifan.jp/kiji/kiji{i}.html" for i in range(1, 25)]
-    
-    for url in urls:
-        try:
-            res = requests.get(url, timeout=3) # タイムアウトを短く設定
-            res.encoding = 'shift_jis'
-            soup = BeautifulSoup(res.text, 'html.parser')
-            for s in soup(["script", "style", "nav", "footer"]): s.decompose()
-            raw_texts.append(soup.get_text(separator=' ', strip=True))
-        except: continue
-        
-    all_data = "\n\n".join(raw_texts)
-    
     res = client.chat.completions.create(
         model="gpt-4o",
+        temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたは「ばんばんち」。以下サイトデータのみを根拠に回答せよ。\n{all_data}"},
+            {"role": "system", "content": f"あなたは「ばんばんち」。以下のデータのみを根拠に回答してください。\n{SITE_DATA}"},
             {"role": "user", "content": payload.message}
         ]
     )
