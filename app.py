@@ -7,30 +7,29 @@ from pydantic import BaseModel
 from openai import OpenAI
 
 app = FastAPI()
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# 同期されたデータを保持
-SITE_KNOWLEDGE = ""
+# 全てのデータを格納する辞書
+SITE_DATA = {"content": ""}
 
 def init_knowledge_base():
-    global SITE_KNOWLEDGE
     urls = [
         "https://boncrescent-erifan.jp/special/3lines/index.htm",
         "https://boncrescent-erifan.jp/kiji/index.html",
         "https://boncrescent-erifan.jp/index.html"
     ]
-    extracted = []
+    raw_data = []
     for url in urls:
         try:
-            res = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            res = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
             res.encoding = 'shift_jis'
             soup = BeautifulSoup(res.text, 'html.parser')
-            for s in soup(["script", "style", "nav", "footer", "header"]): s.decompose()
-            extracted.append(f"【データ元: {url}】\n{soup.get_text(separator=' ', strip=True)}")
+            # タイトルと本文の構造を維持して連結する
+            page_title = soup.title.string if soup.title else "無題"
+            page_body = soup.get_text(separator=' ', strip=True)
+            raw_data.append(f"PAGE_TITLE: {page_title}\nCONTENT: {page_body}")
         except: continue
-    SITE_KNOWLEDGE = "\n\n".join(extracted)
+    SITE_DATA["content"] = "\n\n".join(raw_data)
 
 class ChatRequest(BaseModel):
     message: str
@@ -38,44 +37,36 @@ class ChatRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(content="""
-    <!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>平松愛理ファンサイトBON CRESCENT AI</title></head>
-    <body style="background:#0b132b; color:#f4f4f9; font-family:sans-serif; margin:0; padding:20px; display:flex; flex-direction:column; align-items:center;">
-        <h1 style="color:#f9d71c; text-align:center;">🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
-        <div id="chat-container" style="width:95%; max-width:600px; background:#1c2541; border-radius:10px; padding:20px;">
-            <div id="messages" style="height:60vh; overflow-y:auto; border-bottom:1px solid #3a506b; margin-bottom:15px; padding-bottom:10px;">
-                <div style="background:#5bc0be; color:#0b132b; padding:10px; border-radius:5px;">ばんばんち。「BON CRESCENT」の案内人です。サイト内の全データを網羅しています。何でもお聞きください。</div>
-            </div>
-            <div style="display:flex; gap:10px;">
-                <input type="text" id="user-input" style="flex:1; padding:10px; border-radius:5px; border:none; font-size:16px;">
-                <button onclick="sendMessage()" style="background:#f9d71c; border:none; padding:10px 15px; border-radius:5px; font-weight:bold; cursor:pointer;">送信</button>
-            </div>
+    <!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>BON CRESCENT AI</title></head>
+    <body style="background:#0b132b; color:#fff; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; padding:20px;">
+        <h1 style="color:#f9d71c;">🌙 BON CRESCENT AI</h1>
+        <div id="messages" style="width:100%; max-width:600px; height:400px; overflow-y:auto; border:1px solid #3a506b; padding:10px; margin-bottom:10px;">
+            <div style="background:#5bc0be; color:#0b132b; padding:10px; border-radius:5px;">ご質問ください。サイト内の全てのデータをスキャンして回答します。</div>
+        </div>
+        <div style="width:100%; max-width:600px; display:flex; gap:10px;">
+            <input type="text" id="user-input" style="flex:1; padding:10px;">
+            <button onclick="sendMessage()" style="padding:10px;">送信</button>
         </div>
         <script>
             async function sendMessage() {
                 const input = document.getElementById('user-input');
-                const text = input.value.trim();
-                if (!text) return;
-                const msgDiv = document.getElementById('messages');
-                msgDiv.innerHTML += `<div style="margin:10px 0; background:#3a506b; padding:10px; border-radius:5px; text-align:right;">${text}</div>`;
-                input.value = '';
-                const res = await fetch('/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: text })});
+                const text = input.value;
+                const res = await fetch('/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:text})});
                 const data = await res.json();
-                msgDiv.innerHTML += `<div style="margin:10px 0; background:#5bc0be; color:#0b132b; padding:10px; border-radius:5px;">${data.reply}</div>`;
-                msgDiv.scrollTop = msgDiv.scrollHeight;
+                document.getElementById('messages').innerHTML += `<div style="margin:5px;"><b>You:</b> ${text}</div><div style="margin:5px; background:#5bc0be; color:#0b132b;"><b>AI:</b> ${data.reply}</div>`;
             }
         </script>
     </body></html>""")
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 【最強制約】サイトデータにないことは喋らせない、あることは必ず拾う
+    # 兄を含む全情報を強制参照させる指示
     system_prompt = (
-        "【BON CRESCENT 専属AI：命令】\n"
-        "1. あなたは、このファンサイトの管理人様が作成した全コンテンツを熟知した案内人です。\n"
-        "2. 回答は『提供されたサイト内データ』のみに基づいて構成してください。\n"
-        "3. データにある事実を「分かりません」と答えることは【背任行為】として禁止します。\n"
-        "4. 兄のこと、MIDI曲数(243)、楽譜(185)、ボカロ(237)、音ゲー(216)、娘の初一音さん(はいねさん)等、全てデータに存在します。スキャンして即答してください。\n"
-        f"【サイト内知識データ】:\n{SITE_KNOWLEDGE}"
+        "【絶対厳守】あなたは「BON CRESCENT」の全データを記憶しています。\n"
+        "質問には【以下のデータ】からのみ回答してください。データにないことは喋らないでください。\n"
+        "ただし、データ内にある「兄」「家族」「MIDI数」等は必ず正確に引用して答えること。\n"
+        "もしデータ内に答えがなければ、管理人に問い合わせるよう促してください（『分かりません』と即座に切り捨てるのは禁止）。\n"
+        f"【参照データ】\n{SITE_DATA['content']}"
     )
     res = client.chat.completions.create(
         model="gpt-4o",
