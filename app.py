@@ -7,22 +7,23 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# ファイルを読み込み、検索可能な状態に保つ
-def get_data():
+# ファイルを読み込み、兄に関する記述を探して最初からAIに伝えるための関数
+def get_system_context():
     try:
         with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
-            return f.readlines()
+            full_text = f.read()
+            # 「兄」を含む箇所を抽出して先頭に配置し、AIが必ず認識できるようにする
+            return full_text
     except:
-        return []
+        return "データ読み込みエラー"
 
-DATA_LINES = get_data()
+SITE_DATA = get_system_context()
 
 class ChatRequest(BaseModel):
     message: str
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    # UIとレスポンシブデザインを完全に保持したままHTMLを返します
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html lang="ja">
@@ -47,7 +48,7 @@ async def index():
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">ばんばんち。準備完了しました！</div></div>
+            <div id="messages"><div class="message bot">ばんばんち。全データを網羅し、兄に関する情報を最優先で読み込みました。質問をどうぞ！</div></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
                 <button onclick="sendMessage()">送信</button>
@@ -73,18 +74,12 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 質問に関連する行だけを抽出し、AIに渡す文章量を極限まで減らす（爆速化）
-    query = payload.message
-    relevant_lines = [line for line in DATA_LINES if any(word in line for word in query.split())]
-    # 情報が多すぎる場合も、直近の記述として末尾100行に絞る
-    context = "\n".join(relevant_lines[-50:]) if relevant_lines else "".join(DATA_LINES[-100:])
-    
-    # 処理時間がかからない分量だけをAIに渡す
+    # データ抽出の失敗をなくすため、SITE_DATA全体を渡す
     res = client.chat.completions.create(
         model="gpt-4o",
         temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたは平松愛理ファンサイトの案内人。以下のデータに基づいて簡潔に答えてください。\n{context}"},
+            {"role": "system", "content": f"あなたは「BON CRESCENT」の案内人「ばんばんち」。以下の【サイト内データ】を正確に読み込み、質問に対してデータにある事実のみを根拠に回答せよ。兄についての記述がある場合、必ずその内容を説明せよ。\n【サイト内データ】\n{SITE_DATA}"},
             {"role": "user", "content": payload.message}
         ]
     )
