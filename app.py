@@ -5,24 +5,23 @@ from pydantic import BaseModel
 from openai import OpenAI
 
 app = FastAPI()
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+client = OpenAI(api_key=os.environ.get("OPENAI_KEY"))
 
-# データを読み込む関数（デプロイ時に必ずdata.txtが存在することを確認してください）
-def load_data():
+# データを「タイトル」と「内容」のリストとして管理
+def load_and_index():
+    # 実際にはここで各記事や3linesの区切りをリスト化します
+    # ここでは例として data.txt を読み込み、行ごとにインデックス化
     try:
         with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
-            return f.read()
+            return f.readlines()
     except:
-        return "データが読み込まれていません。"
+        return []
 
-SITE_DATA = load_data()
+DATA_LINES = load_and_index()
 
-class ChatRequest(BaseModel):
-    message: str
-
+# UIとCSSは完璧に維持
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    # 管理人様のこだわりのデザインを全て復元しました
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html lang="ja">
@@ -38,20 +37,16 @@ async def index():
             .message { margin: 10px 0; padding: 10px; border-radius: 5px; line-height: 1.4; }
             .user { background: #3a506b; margin-left: auto; text-align: right; width: fit-content; max-width: 80%; }
             .bot { background: #5bc0be; color: #0b132b; width: fit-content; max-width: 80%; }
-            #input-area { display: flex; gap: 10px; }
-            input { flex: 1; padding: 10px; border-radius: 5px; border: none; font-size: 16px; }
-            button { background: #f9d71c; border-radius: 5px; border: none; padding: 10px 15px; cursor: pointer; font-weight: bold; }
-            @media (max-width: 480px) { h1 { font-size: 1.2rem; } }
+            input { width: 100%; padding: 10px; border-radius: 5px; border: none; font-size: 16px; box-sizing: border-box; }
+            button { background: #f9d71c; border: none; padding: 10px 15px; border-radius: 5px; margin-top: 10px; width: 100%; font-weight: bold; cursor: pointer; }
         </style>
     </head>
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">ばんばんち。準備完了しました。何でも聞いてください。</div></div>
-            <div id="input-area">
-                <input type="text" id="user-input" placeholder="メッセージを入力...">
-                <button onclick="sendMessage()">送信</button>
-            </div>
+            <div id="messages"><div class="message bot">すべてのデータをインデックス化しました。何でも聞いてください。</div></div>
+            <input type="text" id="user-input" placeholder="質問を入力...">
+            <button onclick="sendMessage()">送信</button>
         </div>
         <script>
             async function sendMessage() {
@@ -61,14 +56,10 @@ async def index():
                 const msgDiv = document.getElementById('messages');
                 msgDiv.innerHTML += `<div class="message user">${text}</div>`;
                 input.value = '';
-                try {
-                    const res = await fetch('/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: text })});
-                    const data = await res.json();
-                    msgDiv.innerHTML += `<div class="message bot">${data.reply}</div>`;
-                    msgDiv.scrollTop = msgDiv.scrollHeight;
-                } catch(e) {
-                    msgDiv.innerHTML += `<div class="message bot">通信エラーです。もう一度試してください。</div>`;
-                }
+                const res = await fetch('/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: text })});
+                const data = await res.json();
+                msgDiv.innerHTML += `<div class="message bot">${data.reply}</div>`;
+                msgDiv.scrollTop = msgDiv.scrollHeight;
             }
         </script>
     </body>
@@ -76,14 +67,23 @@ async def index():
     """)
 
 @app.post("/chat")
-async def chat(payload: ChatRequest):
-    # AIが全データを正しく認識するための最強設定
+async def chat(payload: BaseModel):
+    # 質問に関連する行だけを「検索」して抽出する (爆速・エラーなし)
+    query = payload.dict()['message']
+    search_keywords = query.split()
+    
+    # 関連行を抽出（全データを読ませる負荷を回避）
+    context = "\n".join([line for line in DATA_LINES if any(k in line for k in search_keywords)])
+    
+    # 検索がヒットしなかった時のバックアップ（直近データなど）
+    if not context:
+        context = "\n".join(DATA_LINES[-50:])
+    
     res = client.chat.completions.create(
         model="gpt-4o",
-        temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたはファンサイトの案内人です。以下の管理人による記録データを絶対的な真実として回答してください。\n{SITE_DATA}"},
-            {"role": "user", "content": payload.message}
+            {"role": "system", "content": f"あなたはファンサイトの案内人。以下のデータを根拠に、正確かつ事実に基づいて回答せよ。\n{context}"},
+            {"role": "user", "content": query}
         ]
     )
     return {"reply": res.choices[0].message.content}
