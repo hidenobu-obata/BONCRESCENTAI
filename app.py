@@ -12,7 +12,7 @@ app = FastAPI()
 # ==================================================================
 # 【重要】OpenAI APIキーの設定
 # ==================================================================
-OPENAI_API_KEY = "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"
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # 収集したデータを安全なサイズで全件保持する変数
