@@ -7,17 +7,20 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-def get_data_lines():
+# ファイルを読み込み、全体をAIに扱いやすい塊にする
+def get_full_data():
     try:
         with open("data.txt", "r", encoding="utf-8", errors="ignore") as f:
-            return f.readlines()
+            return f.read()
     except:
-        return []
+        return "データがありません。"
 
-DATA_LINES = get_data_lines()
+# 起動時に一度だけ読み込む
+SITE_DATA = get_full_data()
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    # 前回までのデザイン・タイトル・レスポンシブをすべて維持
     return """
     <!DOCTYPE html>
     <html lang="ja">
@@ -65,21 +68,19 @@ async def index():
 @app.post("/chat")
 async def chat(payload: dict):
     user_query = payload.get("msg", "")
-    # 質問に関連しそうな行を抽出し、トークン制限（128k）を確実に回避する量を送信
-    relevant_lines = [line for line in DATA_LINES if any(word in line for word in user_query.split())]
-    context = "".join(relevant_lines[:80]) if relevant_lines else "".join(DATA_LINES[:40])
     
+    # データをすべて渡して、AIの推論能力に任せる（GPT-4o-miniは128kトークンまで扱えるため、データが数万文字程度ならこれで十分カバーできます）
     try:
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": f"あなたは「ばんばんち」。平松愛理ファンサイトの案内人です。以下の情報を元に回答してください。\n{context}"},
+                {"role": "system", "content": f"あなたは「ばんばんち」。以下のデータを元に、質問に答えてください。データ内に答えがある場合は必ずその内容を使ってください。\n---データ---\n{SITE_DATA}"},
                 {"role": "user", "content": user_query}
             ]
         )
         return {"reply": res.choices[0].message.content}
     except Exception as e:
-        return {"reply": "ごめんなさい、うまくお答えできませんでした。"}
+        return {"reply": "ごめんなさい、うまく整理できませんでした。"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
