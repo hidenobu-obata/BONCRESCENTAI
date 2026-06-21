@@ -9,10 +9,9 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# メモリ保持用
+# データを起動時に一度だけ取得し、メモリにキャッシュ
 KNOWLEDGE_BASE = {}
 
-# 起動時に全コンテンツを網羅・保持
 @app.on_event("startup")
 def init_knowledge_base():
     global KNOWLEDGE_BASE
@@ -38,6 +37,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    # 管理人様が指定されたUI・レスポンシブ設定をそのまま維持
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html lang="ja">
@@ -63,7 +63,7 @@ async def index():
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
             <div id="messages">
-                <div class="message bot">ばんばんち。「BON CRESCENT」の案内人です。全データを読み込みました。何でもお聞きください。</div>
+                <div class="message bot">ばんばんち。「BON CRESCENT」の案内人です。準備完了しました。何でもお聞きください。</div>
             </div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
@@ -90,24 +90,17 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # 全データを統合して参照
-    all_knowledge = "\n\n".join(KNOWLEDGE_BASE.values())
-    
-    system_prompt = (
-        "あなたは平松愛理ファンサイト「BON CRESCENT」の専属案内人「ばんばんち」です。"
-        "質問に対し、提供された全データ（記事24本、3lines、bonroom、index）を根拠として回答してください。"
-        "外部知識は一切含めず、データにある事実のみを管理人様の言葉を尊重して伝えてください。"
-        "回答は迅速に行い、データに見当たらない場合は正直にその旨を伝えてください。"
-        f"【参照データ】\n{all_knowledge}"
-    )
-    
+    # 質問に関連する記事だけを高速抽出（全データを一度に渡すと遅延するため）
+    query = payload.message
+    relevant_texts = [text for key, text in KNOWLEDGE_BASE.items() if any(word in text for word in query.split())]
+    context = "\n\n".join(relevant_texts) if relevant_texts else "\n\n".join(KNOWLEDGE_BASE.values())[:10000]
+
     res = client.chat.completions.create(
         model="gpt-4o",
         temperature=0,
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": payload.message}]
+        messages=[
+            {"role": "system", "content": f"あなたは「BON CRESCENT」の専属案内人「ばんばんち」。以下データのみに基づき回答せよ。\n{context}"},
+            {"role": "user", "content": payload.message}
+        ]
     )
     return {"reply": res.choices[0].message.content}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
