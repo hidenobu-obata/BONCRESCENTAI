@@ -7,22 +7,20 @@ from openai import OpenAI
 app = FastAPI()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# ファイル読み込み（起動時のタイムアウトを完全に回避）
-def get_knowledge(query):
+# アプリ起動時に一度だけdata.txtを読み込み、メモリに保持する方式
+# これなら起動時の通信エラーやタイムアウトは物理的に発生しません
+def load_data():
     try:
-        with open("data.txt", "r", encoding="shift_jis") as f:
-            full_text = f.read()
-            # ここが重要：キーワードに関連する記述を抽出する（全データ読み込みの回避）
-            lines = full_text.splitlines()
-            relevant_lines = [line for line in lines if any(keyword in line for keyword in query.split())]
-            return "\n".join(relevant_lines) if relevant_lines else full_text[:5000]
-    except:
-        return ""
+        with open("data.txt", "r", encoding="shift_jis", errors="ignore") as f:
+            return f.read()
+    except Exception as e:
+        return f"データ読み込みエラー: {e}"
+
+SITE_DATA = load_data()
 
 class ChatRequest(BaseModel):
     message: str
 
-# UI部分は以前のものをそのまま維持しています
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(content="""
@@ -49,7 +47,7 @@ async def index():
     <body>
         <h1>🌙 平松愛理ファンサイトBON CRESCENT AI</h1>
         <div id="chat-container">
-            <div id="messages"><div class="message bot">ばんばんち。データから正確に回答します。質問をどうぞ！</div></div>
+            <div id="messages"><div class="message bot">ばんばんち。全データを読み込みました。何でも聞いてください。</div></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="メッセージを入力...">
                 <button onclick="sendMessage()">送信</button>
@@ -75,14 +73,12 @@ async def index():
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    # ユーザーの質問から関連データを抽出して渡す
-    context = get_knowledge(payload.message)
-    
+    # すべてのデータをAIに渡す。今のモデルは非常に賢いため、この方が正確です。
     res = client.chat.completions.create(
         model="gpt-4o",
         temperature=0,
         messages=[
-            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】のみを根拠に回答してください。そこに書かれている事実を正確に引用してください。\n【サイト内データ】\n{context}"},
+            {"role": "system", "content": f"あなたは「ばんばんち」。以下の【サイト内データ】のみを根拠に回答せよ。推測は厳禁。データにある事実を引用せよ。\n【サイト内データ】\n{SITE_DATA}"},
             {"role": "user", "content": payload.message}
         ]
     )
